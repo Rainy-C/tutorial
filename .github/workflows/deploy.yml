@@ -74,59 +74,159 @@ jobs:
         uses: actions/deploy-pages@v4
 
   verify-online:
-    name: Verify all deployed pages
+    name: Crawl every internal link
     runs-on: ubuntu-latest
     needs: deploy
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Probe homepage and all 152 tutorial URLs
+      - name: Crawl all tutorial pages and internal hrefs
         shell: bash
         run: |
           set -euo pipefail
-
-          base="https://rainy-c.github.io/tutorial"
-          total=0
-          ok=0
-          bad=0
-
-          probe() {
-            local label="$1"
-            local url="$2"
-            local code
-            code="$(curl -L --globoff --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 45 \
-              -sS -o /dev/null -w '%{http_code}' "$url" || true)"
-            total=$((total + 1))
-            if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
-              ok=$((ok + 1))
-              printf 'OK   %s  %s\n' "$code" "$label"
-            else
-              bad=$((bad + 1))
-              printf 'FAIL %s  %s\n' "${code:-curl-error}" "$url"
-              echo "::error title=Online page probe failed::${code:-curl-error} $url"
-            fi
-          }
-
-          probe "homepage" "${base}/"
-
-          while IFS= read -r -d '' file; do
-            rel="${file#content/docs/}"
-            rel="${rel%.md}"
-            rel="${rel%.mdx}"
-
-            encoded="$(python3 - "$rel" <<'PY'
+          python3 - <<'PY'
+          import os
           import sys
-          from urllib.parse import quote
-          print('/'.join(quote(part, safe='-._~') for part in sys.argv[1].split('/')))
+          import time
+          from collections import defaultdict, deque
+          from html.parser import HTMLParser
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import quote, urljoin, urlsplit, urlunsplit, urldefrag
+          from urllib.request import Request, urlopen
+
+          BASE = "https://rainy-c.github.io/tutorial/"
+          HOST = "rainy-c.github.io"
+
+          class Links(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.hrefs = []
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower() != "a":
+                      return
+                  for k, v in attrs:
+                      if k.lower() == "href" and v:
+                          self.hrefs.append(v)
+
+          def canonical(url):
+              url, _ = urldefrag(url)
+              p = urlsplit(url)
+              return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path or "/", "", ""))
+
+          def seed_urls():
+              yield BASE, "<homepage>"
+              root = "content/docs"
+              for dirpath, _, files in os.walk(root):
+                  for name in sorted(files):
+                      if not (name.endswith(".md") or name.endswith(".mdx")):
+                          continue
+                      full = os.path.join(dirpath, name)
+                      rel = os.path.relpath(full, root).replace(os.sep, "/")
+                      rel = rel[:-4] if rel.endswith(".mdx") else rel[:-3]
+                      enc = "/".join(quote(part, safe="-._~") for part in rel.split("/"))
+                     yield canonical(BASE + enc + "/"), rel
+
+          queue = deque()
+          refs = defaultdict(set)
+          discovered = set()
+
+          for url, label in seed_urls():
+              u = canonical(url)
+              if u not in discovered:
+                  discovered.add(u)
+                  queue.append(u)
+              refs[u].add(label)
+
+          results = {}
+          html_pages = 0
+          links_seen = 0
+          same_host_links = 0
+
+          while queue:
+              url = queue.popleft()
+              code = 0
+              body = b""
+              ctype = ""
+              final = url
+
+              for attempt in range(4):
+                  req = Request(url, headers={"User-Agent": "Rainy-C/tutorial-link-audit"})
+                  try:
+                      with urlopen(req, timeout=30) as r:
+                        code = r.getcode() or 0
+                        final = canonical(r.geturl())
+                        ctype = r.headers.get("Content-Type", "")
+                        body = r.read()
+                      break
+                  except HTTPError as e:
+                      code = e.code
+                      final = canonical(e.geturl() or url)
+                      try:
+                          body = e.read()
+                      except Exception:
+                          body = b""
+                      ctype = e.headers.get("Content-Type", "") if e.headers else ""
+                      break
+                  except (URLError, TimeoutError, OSError) as e:
+                      if attempt == 3:
+                          code = 0
+                          body = str(e).encode()
+                      else:
+                          time.sleep(1 + attempt)
+
+              results[url] = code
+
+              if not (200 <= code < 300):
+                  continue
+
+              if "text/html" not in ctype.lower():
+                  continue
+
+              html_pages += 1
+              parser = Links()
+              try:
+                  parser.feed(body.decode("utf-8", errors="replace"))
+              except Exception:
+                  pass
+
+              for href in parser.hrefs:
+                  links_seen += 1
+                  raw = href.strip()
+                  low = raw.lower()
+                  if not raw or low.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
+                      continue
+
+                  target = canonical(urljoin(final, raw))
+                  p = urlsplit(target)
+                  if p.scheme not in ("http", "https") or p.netloc.lower() != HOST:
+                      continue
+
+                  same_host_links += 1
+                  refs[target].add(url)
+                  if target not in discovered:
+                      discovered.add(target)
+                      queue.append(target)
+
+          bad = sorted((u, c) for u, c in results.items() if not (200 <= c < 300))
+
+          print()
+          print("===== INTERNAL LINK AUDIT =====")
+          print("Seed URLs: 153")
+          print(f"HTML pages crawled: {html_pages}")
+          print(f"Anchor hrefs parsed: {links_seen}")
+          print(f"Same-host hrefs discovered: {same_host_links}")
+          print(f"Unique same-host URLs requested: {len(results)}")
+          print(f"Broken/non-2xx URLs: {len(bad)}")
+          print()
+
+          if bad:
+              print("===== BROKEN URLS =====")
+              for url, code in bad:
+                  print(f"[{code or 'ERR'}] {url}")
+                  for ref in sorted(refs[url]):
+                      print(f"    <- {ref}")
+                  print(f"::error title=Broken internal link::{code or 'ERR'} {url}")
+              sys.exit(1)
+
+          print("No broken same-host links found.")
           PY
-          )"
-
-            probe "$rel" "${base}/${encoded}/"
-          done < <(find content/docs -type f \( -name '*.md' -o -name '*.mdx' \) -print0 | sort -z)
-
-          echo "HTTP probe total: $total"
-          echo "HTTP 2xx: $ok"
-          echo "HTTP failures: $bad"
-
-          [[ "$total" -eq 153 ]]
-          [[ "$bad" -eq 0 ]]
