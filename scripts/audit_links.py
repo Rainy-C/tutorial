@@ -4,215 +4,142 @@ import time
 from collections import defaultdict, deque
 from html.parser import HTMLParser
 from urllib.error import HTTPError
-from urllib.parse import quote, urljoin, urlsplit, urlunsplit, urldefrag
+from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit, urldefrag
 from urllib.request import Request, urlopen
 
 BASE = "https://rainy-c.github.io/tutorial/"
 HOST = "rainy-c.github.io"
 
-
-class Links(HTMLParser):
+class LinkParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self.hrefs = []
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() != "a":
+        if tag != "a":
             return
-      for key, value in attrs:
-            if key.lower() == "href" and value:
+        for key, value in attrs:
+            if key == "href" and value:
                 self.hrefs.append(value)
 
-
-def canonical(url: str) -> str:
+def canon(url):
     url, _ = urldefrag(url)
-    parsed = urlsplit(url)
-    encoded_path = quote(
-        parsed.path or "/",
-        safe="/:@-._~!$&'(i*++,;=%",
-    )
-    return urlunsplit(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            encoded_path,
-            "",
-            "",
-        )
-    )
+    p = urlsplit(url)
+    path = quote(unquote(p.path or "/"), safe="/%:@-._~")
+    return urlunsplit((p.scheme.lower(), p.netloc.lower(), path, "", ""))
 
-
-def seed_urls():
+def seeds():
     yield BASE, "<homepage>"
-
     root = "content/docs"
-    for dirpath, _, files in os.walk(root):
-        for name in sorted(files):
-            if not (name.endswith(".md") or name.endswith(".mdx")):
+    for dirpath, _, names in os.walk(root):
+        for name in sorted(names):
+            if not name.endswith((".md", ".mdx")):
                 continue
-
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
             rel = rel[:-4] if rel.endswith(".mdx") else rel[:-3]
-            encoded = "/".join(
-                quote(part, safe="-._~")
-                for part in rel.split("/")
-            )
-            yield canonical(BASE + encoded + "/"), rel
+            enc = "/".join(quote(x, safe="-._~") for x in rel.split("/"))
+            yield canon(BASE + enc + "/"), rel
 
-
-def fetch(url: str):
-    code = 0
-    body = b""
-    content_type = ""
-    final_url = url
-    error = ""
-
+def fetch(url):
+    last_error = ""
     for attempt in range(4):
         try:
-            req = Request(
-                url,
-                headers={"User-Agent": "Rainy-C/tutorial-link-audit"},
-            )
-            with urlopen(req, timeout=30) as response:
-                code = response.getcode() or 0
-                final_url = canonical(response.geturl())
-                content_type = response.headers.get("Content-Type", "")
-                body = response.read()
-            break
-        except HTTPError as exc:
-            code = exc.code
-            final_url = canonical(exc.geturl() or url)
-            content_type = (
-                exc.headers.get("Content-Type", "")
-                if exc.headers
-                else ""
-            )
+            req = Request(url, headers={"User-Agent": "Rainy-C-link-audit"})
+            with urlopen(req, timeout=30) as r:
+                return (
+                    r.getcode() or 0,
+                    canon(r.geturl()),
+                    r.headers.get("Content-Type", ""),
+                    r.read(),
+                    "",
+                )
+        except HTTPError as e:
+            body = b""
             try:
-                body = exc.read()
+                body = e.read()
             except Exception:
-                body = b""
-            error = repr(exc)
-            break
-        except Exception as exc:
-            error = repr(exc)
-            if attempt == 3:
-                code = 0
-            else:
+                pass
+            return (
+                e.code,
+                canon(e.geturl() or url),
+                e.headers.get("Content-Type", "") if e.headers else "",
+                body,
+                repr(e),
+            )
+        except Exception as e:
+            last_error = repr(e)
+            if attempt < 3:
                 time.sleep(1 + attempt)
-
-    return code, final_url, content_type, body, error
-
+    return 0, url, "", b"", last_error
 
 def main():
     queue = deque()
-    discovered = set()
+    seen = set()
     refs = defaultdict(set)
 
-    for url, label in seed_urls():
-        url = canonical(url)
-        if url not in discovered:
-            discovered.add(url)
+    for url, label in seeds():
+        if url not in seen:
+            seen.add(url)
             queue.append(url)
         refs[url].add(label)
 
     results = {}
     errors = {}
     html_pages = 0
-    hrefs_parsed = 0
-    same_host_hrefs = 0
+    href_count = 0
 
     while queue:
         url = queue.popleft()
-        code, final_url, content_type, body, error = fetch(url)
+        code, final_url, ctype, body, error = fetch(url)
         results[url] = code
         if error:
             errors[url] = error
-
-        if not (200 <= code < 300):
-            continue
-        if "text/html" not in content_type.lower():
+        if not (200 <= code < 300) or "text/html" not in ctype.lower():
             continue
 
         html_pages += 1
-        parser = Links()
-        try:
-            parser.feed(body.decode("utf-8", errors="replace"))
-        except Exception:
-            pass
+        parser = LinkParser()
+        parser.feed(body.decode("utf-8", errors="replace"))
 
         for href in parser.hrefs:
-            hrefs_parsed += 1
+            href_count += 1
             raw = href.strip()
-            lowered = raw.lower()
-
-            if (
-                not raw
-                or lowered.startswith(
-                    ("#", "mailto:", "tel:", "javascript:", "data:")
-                )
-            ):
+            low = raw.lower()
+            if not raw or low.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
                 continue
 
-            target = canonical(urljoin(final_url, raw))
-            parsed = urlsplit(target)
-            if (
-                parsed.scheme not in ("http", "https")
-                or parsed.netloc.lower() != HOST
-            ):
+            target = canon(urljoin(final_url, raw))
+            p = urlsplit(target)
+            if p.scheme not in ("http", "https") or p.netloc.lower() != HOST:
                 continue
 
-            same_host_hrefs += 1
             refs[target].add(url)
-
-            if target not in discovered:
-                discovered.add(target)
+            if target not in seen:
+                seen.add(target)
                 queue.append(target)
 
-    bad = sorted(
-        (url, code)
-        for url, code in results.items()
-        if not (200 <= code < 300)
-    )
+    bad = sorted((url, code) for url, code in results.items() if not (200 <= code < 300))
 
     print("===== INTERNAL LINK AUDIT =====")
-    print("Seed URLs: 153")
-    print(f"HTML pages crawled: {html_pages}")
-    print(f"Anchor hrefs parsed: {hrefs_parsed}")
-    print(f"Same-host hrefs discovered: {same_host_hrefs}")
-    print(f"Unique same-host URLs requested: {len(results)}")
-    print(f"Broken/non-2xx URLs: {len(bad)}")
+    print("Seed URLs:", 153)
+    print("HTML pages crawled:", html_pages)
+    print("Anchor hrefs parsed:", href_count)
+    print("Unique same-host URLs requested:", len(results))
+    print("Broken/non-2xx URLs:", len(bad))
 
     if bad:
         print("\n===== BROKEN URLS =====")
         for url, code in bad:
             print(f"[{code or 'ERR'}] {url}")
             for ref in sorted(refs[url]):
-                print(f"    <- {ref}")
+                print("    <-", ref)
             if url in errors:
-                print(f"    !! {errors[url]}")
-
-        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-        if summary_path:
-            with open(summary_path, "a", encoding="utf-8") as output:
-                output.write("## Internal link audit\n\n")
-                output.write(
-                    f"- Unique URLs checked: **{len(results)}**\n"
-                )
-                output.write(
-                    f"- Broken/non-2xx: **{len(bad)}**\n\n"
-                )
-                output.write("### Broken URLs\n\n")
-                for url, code in bad:
-                    output.write(f"- `{code or 'ERR'}` {url}\n")
-                    for ref in sorted(refs[url]):
-                        output.write(f"  - from: {ref}\n")
-
+                print("    !!", errors[url])
         return 1
 
     print("\nNo broken same-host links found.")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
