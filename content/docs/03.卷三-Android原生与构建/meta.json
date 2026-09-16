@@ -1,0 +1,22 @@
+{
+  "title": "卷三 · Android 原生与构建",
+  "pagesIndex": "00.本卷导读",
+  "defaultOpen": false,
+  "pages": [
+    "00.本卷导读",
+    "01.第31章-Android系统分层",
+    "02.第32章-为什么是可执行文件而非APK",
+    "03.第33章-NDK与第一条ndk-build",
+    "04.第34章-Android.mk与Application.mk逐行",
+    "05.第35章-push到手机并运行",
+    "06.第36章-adb全套",
+    "07.第37章-root-权限与SELinux",
+    "08.第38章-logcat与android-log-h",
+    "09.第39章-交叉编译的坑",
+    "10.第40章-cpp_static与STL选择",
+    "11.第41章-体积与符号裁剪",
+    "12.第42章-引入第三方源码-ImGui",
+    "13.第43章-引入预编译静态库-Embree",
+    "14.第44章-工程目录与include约定"
+  ]
+}

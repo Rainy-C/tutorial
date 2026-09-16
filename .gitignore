@@ -1,5 +1,8 @@
 node_modules/
-docs/.vitepress/dist/
-docs/.vitepress/cache/
-*.local
+.next/
+out/
+.source/
+*.tsbuildinfo
 .DS_Store
+.env*
+!.env.example
