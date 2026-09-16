@@ -1,10 +1,19 @@
 /* Site-wide polish. Reading pages stay clean; only subtle refinements. */
 
-/* Mobile interaction polish: remove Android/WebKit tap flash without hiding keyboard focus. */
+/* Slightly denser global scale. Teek/VitePress use rem heavily, so this
+   reduces typography and spacing together without changing layout rules. */
 html {
+  font-size: 15px;
   -webkit-tap-highlight-color: transparent;
 }
 
+@media (max-width: 768px) {
+  html {
+    font-size: 14px;
+  }
+}
+
+/* Mobile interaction polish: remove Android/WebKit tap flash without hiding keyboard focus. */
 :where(
   a,
   button,
