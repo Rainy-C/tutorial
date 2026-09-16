@@ -20,31 +20,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.17.1
+
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
       - name: Build static site
         run: pnpm build
+
       - name: Verify all tutorial routes were exported
         shell: bash
         run: |
           set -euo pipefail
           expected=0
           missing=0
+
           while IFS= read -r -d '' file; do
             expected=$((expected + 1))
             rel="${file#content/docs/}"
             rel="${rel%.md}"
             rel="${rel%.mdx}"
             target="out/${rel}/index.html"
+
             if [[ ! -f "$target" ]]; then
               echo "::error title=Missing exported tutorial route::$target"
               missing=$((missing + 1))
@@ -55,8 +62,10 @@ jobs:
           echo "Missing exported routes: $missing"
           [[ "$expected" -eq 152 ]]
           [[ "$missing" -eq 0 ]]
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
@@ -80,153 +89,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
       - name: Crawl all tutorial pages and internal hrefs
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import sys
-          import time
-          from collections import defaultdict, deque
-          from html.parser import HTMLParser
-          from urllib.error import HTTPError, URLError
-          from urllib.parse import quote, urljoin, urlsplit, urlunsplit, urldefrag
-          from urllib.request import Request, urlopen
-
-          BASE = "https://rainy-c.github.io/tutorial/"
-          HOST = "rainy-c.github.io"
-
-          class Links(HTMLParser):
-              def __init__(self):
-                  super().__init__()
-                  self.hrefs = []
-              def handle_starttag(self, tag, attrs):
-                  if tag.lower() != "a":
-                      return
-                  for k, v in attrs:
-                      if k.lower() == "href" and v:
-                          self.hrefs.append(v)
-
-          def canonical(url):
-              url, _ = urldefrag(url)
-              p = urlsplit(url)
-              return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path or "/", "", ""))
-
-          def seed_urls():
-              yield BASE, "<homepage>"
-              root = "content/docs"
-              for dirpath, _, files in os.walk(root):
-                  for name in sorted(files):
-                      if not (name.endswith(".md") or name.endswith(".mdx")):
-                          continue
-                      full = os.path.join(dirpath, name)
-                      rel = os.path.relpath(full, root).replace(os.sep, "/")
-                      rel = rel[:-4] if rel.endswith(".mdx") else rel[:-3]
-                      enc = "/".join(quote(part, safe="-._~") for part in rel.split("/"))
-                     yield canonical(BASE + enc + "/"), rel
-
-          queue = deque()
-          refs = defaultdict(set)
-          discovered = set()
-
-          for url, label in seed_urls():
-              u = canonical(url)
-              if u not in discovered:
-                  discovered.add(u)
-                  queue.append(u)
-              refs[u].add(label)
-
-          results = {}
-          html_pages = 0
-          links_seen = 0
-          same_host_links = 0
-
-          while queue:
-              url = queue.popleft()
-              code = 0
-              body = b""
-              ctype = ""
-              final = url
-
-              for attempt in range(4):
-                  req = Request(url, headers={"User-Agent": "Rainy-C/tutorial-link-audit"})
-                  try:
-                      with urlopen(req, timeout=30) as r:
-                        code = r.getcode() or 0
-                        final = canonical(r.geturl())
-                        ctype = r.headers.get("Content-Type", "")
-                        body = r.read()
-                      break
-                  except HTTPError as e:
-                      code = e.code
-                      final = canonical(e.geturl() or url)
-                      try:
-                          body = e.read()
-                      except Exception:
-                          body = b""
-                      ctype = e.headers.get("Content-Type", "") if e.headers else ""
-                      break
-                  except (URLError, TimeoutError, OSError) as e:
-                      if attempt == 3:
-                          code = 0
-                          body = str(e).encode()
-                      else:
-                          time.sleep(1 + attempt)
-
-              results[url] = code
-
-              if not (200 <= code < 300):
-                  continue
-
-              if "text/html" not in ctype.lower():
-                  continue
-
-              html_pages += 1
-              parser = Links()
-              try:
-                  parser.feed(body.decode("utf-8", errors="replace"))
-              except Exception:
-                  pass
-
-              for href in parser.hrefs:
-                  links_seen += 1
-                  raw = href.strip()
-                  low = raw.lower()
-                  if not raw or low.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
-                      continue
-
-                  target = canonical(urljoin(final, raw))
-                  p = urlsplit(target)
-                  if p.scheme not in ("http", "https") or p.netloc.lower() != HOST:
-                      continue
-
-                  same_host_links += 1
-                  refs[target].add(url)
-                  if target not in discovered:
-                      discovered.add(target)
-                      queue.append(target)
-
-          bad = sorted((u, c) for u, c in results.items() if not (200 <= c < 300))
-
-          print()
-          print("===== INTERNAL LINK AUDIT =====")
-          print("Seed URLs: 153")
-          print(f"HTML pages crawled: {html_pages}")
-          print(f"Anchor hrefs parsed: {links_seen}")
-          print(f"Same-host hrefs discovered: {same_host_links}")
-          print(f"Unique same-host URLs requested: {len(results)}")
-          print(f"Broken/non-2xx URLs: {len(bad)}")
-          print()
-
-          if bad:
-              print("===== BROKEN URLS =====")
-              for url, code in bad:
-                  print(f"[{code or 'ERR'}] {url}")
-                  for ref in sorted(refs[url]):
-                      print(f"    <- {ref}")
-                  print(f"::error title=Broken internal link::{code or 'ERR'} {url}")
-              sys.exit(1)
-
-          print("No broken same-host links found.")
-          PY
+        run: python3 scripts/audit_links.py
