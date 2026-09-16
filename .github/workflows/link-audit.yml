@@ -14,4 +14,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Crawl all tutorial pages and internal hrefs
-        run: python3 scripts/audit_links.py
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/audit_links.py 2>&1 | tee audit.log
+          status=${PIPESTATUS[0]}
+          echo
+          echo "===== BROKEN LINK ANNOTATIONS ====="
+          grep -E '^\[(404|400|401|403|405|410|500|502|503|504|ERR)\] ' audit.log | while IFS= read -r line; do
+            escaped="${line//'%'/'%25'}"
+            escaped="${escaped//$'\r'/'%0D'}"
+            escaped="${escaped//$'\n'/'%0A'}"
+            echo "::error title=Broken internal link::$escaped"
+          done
+          exit "$status"
