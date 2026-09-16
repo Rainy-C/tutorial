@@ -1,5 +1,33 @@
 /* Site-wide polish. Reading pages stay clean; only subtle refinements. */
 
+/* Mobile interaction polish: remove Android/WebKit tap flash without hiding keyboard focus. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(
+  a,
+  button,
+  [role="button"],
+  summary,
+  .VPButton,
+  .VPFeature
+) {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+:where(
+  a,
+  button,
+  [role="button"],
+  summary,
+  .VPButton,
+  .VPFeature
+):focus:not(:focus-visible) {
+  outline: none;
+}
+
 // keep long code lines scrollable on mobile (belt & braces besides Teek css)
 .vp-doc div[class*="language-"] {
   overflow-x: auto;
@@ -18,10 +46,13 @@
   overflow-wrap: anywhere;
 }
 
-// homepage cards: slight lift on hover, no gradients
+// homepage cards: slight lift on real hover devices, no gradients
 .VPFeature {
   transition: transform 0.25s ease, box-shadow 0.25s ease;
-  &:hover {
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .VPFeature:hover {
     transform: translateY(-3px);
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
   }
