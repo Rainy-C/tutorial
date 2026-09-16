@@ -28,6 +28,9 @@ def canon(url):
     path = quote(unquote(p.path or "/"), safe="/%:@-._~")
     return urlunsplit((p.scheme.lower(), p.netloc.lower(), path, "", ""))
 
+def gh_escape(value):
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
 def seeds():
     yield BASE, "<homepage>"
     root = "content/docs"
@@ -127,15 +130,19 @@ def main():
     print("Anchor hrefs parsed:", href_count)
     print("Unique same-host URLs requested:", len(results))
     print("Broken/non-2xx URLs:", len(bad))
+    print(f"::notice title=Internal link audit::{gh_escape(f'checked={len(results)} broken={len(bad)}')}")
 
     if bad:
         print("\n===== BROKEN URLS =====")
         for url, code in bad:
             print(f"[{code or 'ERR'}] {url}")
-            for ref in sorted(refs[url]):
+            ref_list = sorted(refs[url])
+            for ref in ref_list:
                 print("    <-", ref)
             if url in errors:
                 print("    !!", errors[url])
+            annotation = f"{code or 'ERR'} {url} <- {' | '.join(ref_list)}"
+            print(f"::error title=Broken internal link::{gh_escape(annotation)}")
         return 1
 
     print("\nNo broken same-host links found.")
