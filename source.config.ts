@@ -9,6 +9,10 @@ export default defineConfig({
     remarkPlugins: [remarkDirective, remarkDirectiveAdmonition, remarkMath, remarkMdxMermaid],
     rehypePlugins: (plugins) => [rehypeKatex, ...plugins],
     rehypeCodeOptions: {
+      themes: {
+        light: 'github-light',
+        dark: 'github-dark',
+      },
       langAlias: {
         gitignore: 'text',
         dataview: 'text',
