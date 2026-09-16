@@ -33,6 +33,28 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build static site
         run: pnpm build
+      - name: Verify all tutorial routes were exported
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=0
+          missing=0
+          while IFS= read -r -d '' file; do
+            expected=$((expected + 1))
+            rel="${file#content/docs/}"
+            rel="${rel%.md}"
+            rel="${rel%.mdx}"
+            target="out/${rel}/index.html"
+            if [[ ! -f "$target" ]]; then
+              echo "::error title=Missing exported tutorial route::$target"
+              missing=$((missing + 1))
+            fi
+          done < <(find content/docs -type f \( -name '*.md' -o -name '*.mdx' \) -print0)
+
+          echo "Tutorial source files: $expected"
+          echo "Missing exported routes: $missing"
+          [[ "$expected" -eq 152 ]]
+          [[ "$missing" -eq 0 ]]
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
