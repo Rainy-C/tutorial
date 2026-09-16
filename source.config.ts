@@ -8,5 +8,11 @@ export default defineConfig({
   mdxOptions: {
     remarkPlugins: [remarkDirective, remarkDirectiveAdmonition, remarkMath, remarkMdxMermaid],
     rehypePlugins: (plugins) => [rehypeKatex, ...plugins],
+    rehypeCodeOptions: {
+      langAlias: {
+        gitignore: 'text',
+        dataview: 'text',
+      },
+    },
   },
 });
