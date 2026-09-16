@@ -21,7 +21,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@v4
         with:
           version: 10.17.1
       - name: Setup Node
@@ -72,3 +72,61 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  verify-online:
+    name: Verify all deployed pages
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Probe homepage and all 152 tutorial URLs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base="https://rainy-c.github.io/tutorial"
+          total=0
+          ok=0
+          bad=0
+
+          probe() {
+            local label="$1"
+            local url="$2"
+            local code
+            code="$(curl -L --globoff --retry 3 --retry-delay 1 --connect-timeout 15 --max-time 45 \
+              -sS -o /dev/null -w '%{http_code}' "$url" || true)"
+            total=$((total + 1))
+            if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+              ok=$((ok + 1))
+              printf 'OK   %s  %s\n' "$code" "$label"
+            else
+              bad=$((bad + 1))
+              printf 'FAIL %s  %s\n' "${code:-curl-error}" "$url"
+              echo "::error title=Online page probe failed::${code:-curl-error} $url"
+            fi
+          }
+
+          probe "homepage" "${base}/"
+
+          while IFS= read -r -d '' file; do
+            rel="${file#content/docs/}"
+            rel="${rel%.md}"
+            rel="${rel%.mdx}"
+
+            encoded="$(python3 - "$rel" <<'PY'
+          import sys
+          from urllib.parse import quote
+          print('/'.join(quote(part, safe='-._~') for part in sys.argv[1].split('/')))
+          PY
+          )"
+
+            probe "$rel" "${base}/${encoded}/"
+          done < <(find content/docs -type f \( -name '*.md' -o -name '*.mdx' \) -print0 | sort -z)
+
+          echo "HTTP probe total: $total"
+          echo "HTTP 2xx: $ok"
+          echo "HTTP failures: $bad"
+
+          [[ "$total" -eq 153 ]]
+          [[ "$bad" -eq 0 ]]
