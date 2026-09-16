@@ -1,0 +1,26 @@
+{
+  "private": true,
+  "name": "tutorial-site",
+  "version": "1.0.0",
+  "description": "编程教程全集 — 基于 vitepress-theme-teek 的教程知识库",
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "markdown-it": "14",
+    "markdown-it-mathjax3": "^4.3.2",
+    "sass": "^1.89.1",
+    "vitepress": "^1.6.3"
+  },
+  "dependencies": {
+    "markdown-it-container": "^4.0.0",
+    "mermaid": "^11.12.2",
+    "vitepress-plugin-mermaid": "^2.0.17",
+    "vitepress-theme-teek": "^1.6.2",
+    "vue": "^3.5.16"
+  },
+  "packageManager": "pnpm@9.15.4"
+}
